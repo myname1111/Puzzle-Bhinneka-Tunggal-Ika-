@@ -517,7 +517,7 @@ def next_level_process(
     if len(next_level_events) == 0:
         return level_num, level
     next_level = level_num + 1
-    esper.component_for_entity(level_text, Text).text = f"Level: {next_level}"
+    esper.component_for_entity(level_text, Text).text = f"Level: {next_level + 1}"
     for ent, _ in esper.get_component(EndUi):
         esper.add_component(ent, Deleted())
     level = level.update(next_level, sprite_server, levels)
