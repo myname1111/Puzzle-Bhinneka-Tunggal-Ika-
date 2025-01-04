@@ -303,7 +303,17 @@ class Events:
             return []
 
 
-def center_pos(uncentered_pos: ScreenPos, size: tuple[int, int]) -> ScreenPos:
+@dataclass
+class Clickable[T]:
+    on_click_event: T
+
+
+@dataclass
+class NextLevelEvent:
+    next_level: int
+
+
+def center_pos(uncentered_pos: ScreenPos, size: tuple[float, float]) -> ScreenPos:
     return ScreenPos(uncentered_pos.x - size[0] / 2, uncentered_pos.y - size[1] / 2)
 
 
@@ -315,20 +325,31 @@ def get_component_optional(entity: int, component):
         return None
 
 
+def get_size(
+    renderable: Renderable, sprite_server: SpriteServer
+) -> tuple[float, float]:
+    if type(renderable.sprite_id) is AssetId:
+        sprite = sprite_server.get(renderable.sprite_id)
+        return sprite.w, sprite.h
+    elif type(renderable.sprite_id) is SpriteSheetId:
+        return renderable.sprite_id.rect.size
+    else:
+        assert False
+
+
 def render_sprites_process(fake_screen: Surface, sprite_server: SpriteServer):
     for ent, (renderable, screen_pos) in esper.get_components(Renderable, ScreenPos):
         centered = get_component_optional(ent, Centered)
+        size = get_size(renderable, sprite_server)
 
         if type(renderable.sprite_id) is AssetId:
             sprite = sprite_server.get(renderable.sprite_id)
-            size = (sprite.w, sprite.h)
             pos = screen_pos if centered is None else center_pos(screen_pos, size)
             pos = (pos.x, pos.y)
             fake_screen.blit(sprite.image, pos)
 
         elif type(renderable.sprite_id) is SpriteSheetId:
             spritesheet = sprite_server.get(renderable.sprite_id.sprite_sheet_id)
-            size = (renderable.sprite_id.rect.w, renderable.sprite_id.rect.h)
             pos = screen_pos if centered is None else center_pos(screen_pos, size)
             pos = (pos.x, pos.y)
             fake_screen.blit(spritesheet.image, pos, renderable.sprite_id.rect)
@@ -386,6 +407,7 @@ def level_done_process(
     level_done_events = events.get(LevelDoneEvent)
     if len(level_done_events) == 0:
         return
+    current_level = level_done_events[0].data.current_level
 
     level_text = esper.create_entity()
     esper.add_component(level_text, Text("Rumah gadang", silkscreen_med))
@@ -398,6 +420,29 @@ def level_done_process(
     esper.add_component(button, Renderable(next_button_image))
     esper.add_component(button, ScreenPos(RESOLUTION[0] / 2, Y_SIZE + Y_OFFSET + 100))
     esper.add_component(button, Centered())
+    esper.add_component(button, Clickable(NextLevelEvent(current_level + 1)))
+
+
+def handle_clicks_process(
+    events: Events, mouse_pos: tuple[float, float], sprite_server: SpriteServer
+):
+    for ent, (renderable, screen_pos, clickable) in esper.get_components(
+        Renderable, ScreenPos, Clickable
+    ):
+        centered = get_component_optional(ent, Centered)
+        width, height = size = get_size(renderable, sprite_server)
+        centered_pos = screen_pos if centered is None else center_pos(screen_pos, size)
+        aabb = pygame.Rect(centered_pos.x, centered_pos.y, width, height)
+        if aabb.collidepoint(mouse_pos[0], mouse_pos[1]):
+            events.broadcast(clickable.on_click_event)
+
+
+def next_level_process(events: Events):
+    next_level_events = events.get(NextLevelEvent)
+    if len(next_level_events) == 0:
+        return
+    next_level = next_level_events[0].data.next_level
+    print(f"next level: {next_level}")
 
 
 def event_stage(
@@ -408,6 +453,7 @@ def event_stage(
     events: Events,
     silkscreen_med: AssetId[Font],
     next_button_image: AssetId[Sprite],
+    sprite_server: SpriteServer,
 ) -> bool:
     if event.type == pygame.QUIT:
         running = False
@@ -419,7 +465,9 @@ def event_stage(
         mouse_pos = pygame.mouse.get_pos()
         mouse_pos = (mouse_pos[0] * scale[0], mouse_pos[1] * scale[1])
         move_event(mouse_pos, level_grid_resource, events)
+        handle_clicks_process(events, mouse_pos, sprite_server)
     level_done_process(events, silkscreen_med, next_button_image)
+    next_level_process(events)
     events.clear()
     return running
 
@@ -456,6 +504,7 @@ def main():
                 events,
                 silkscreen_med,
                 next_button_image,
+                sprite_server,
             )
 
         render_stage(window, fake_screen, sprite_server, font_server)
