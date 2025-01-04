@@ -1,3 +1,4 @@
+import json
 import random
 from dataclasses import dataclass
 from typing import Any
@@ -81,6 +82,45 @@ class ScreenPos:
 
 
 @dataclass
+class LevelInfo:
+    image: str
+    desc: str
+
+    @staticmethod
+    def from_dict(in_dict: dict[str, str]):
+        image = in_dict["image_name"]
+        desc = in_dict["desc"]
+        return LevelInfo(image, desc)
+
+
+@dataclass
+class LevelsResource:
+    levels: list[LevelInfo]
+    batches: int = 0
+
+    @staticmethod
+    def from_json(path: str, shuffle=True, seed=0):
+        with open(path) as file:
+            in_str = file.read()
+        in_list = json.loads(in_str)
+        level_info_list = [
+            LevelInfo.from_dict(level_info_dict) for level_info_dict in in_list
+        ]
+        if shuffle:
+            random.seed(seed)
+            random.shuffle(level_info_list)
+        return LevelsResource(level_info_list)
+
+    def __getitem__(self, idx: int) -> LevelInfo:
+        total_len = len(self.levels) * (1 + self.batches)
+        if idx >= total_len:
+            self.batches += 1
+            random.shuffle(self.levels)
+        actual_idx = idx % len(self.levels)
+        return self.levels[actual_idx]
+
+
+@dataclass
 class LevelGridResource:
     tiles: list[tuple[int | None, int]]
     empty: tuple[int, int]
@@ -88,7 +128,6 @@ class LevelGridResource:
     level_size: int
     tile_width: float
     tile_height: float
-    level: int
 
     @staticmethod
     def get_moves_from_level(level: int, level_size: int):
@@ -130,11 +169,12 @@ class LevelGridResource:
         return (grid, empty_slot)
 
     @staticmethod
-    def create_level(level: int, sprite_server: SpriteServer):
+    def create_level(level: int, sprite_server: SpriteServer, levels: LevelsResource):
         level_size = level // 4 + 2
         level_area = level_size**2
 
-        image = pygame.image.load(f"assets/{level + 1}.png")
+        level_image = levels[level].image
+        image = pygame.image.load(f"assets/{level_image}")
         scaling_factor = Y_SIZE / image.get_height()
         image = pygame.transform.scale_by(image, scaling_factor)
         image_sprite = Sprite(image)
@@ -153,7 +193,6 @@ class LevelGridResource:
         moves = LevelGridResource.get_moves_from_level(level, level_size)
         random.seed(level)
         (idxs, empty_slot) = LevelGridResource.shuffle(idxs, moves, level_size)
-        print(idxs)
 
         sprites = []
         incorrect = 0
@@ -182,7 +221,7 @@ class LevelGridResource:
             sprites.append((tile_entity, idx))
 
         return LevelGridResource(
-            sprites, empty_slot, incorrect, level_size, tile_width, tile_height, level
+            sprites, empty_slot, incorrect, level_size, tile_width, tile_height
         )
 
     def __getitem__(self, pos: tuple[int, int]) -> tuple[int | None, int]:
@@ -247,6 +286,18 @@ class LevelGridResource:
         self[old_pos] = (None, 0)
         self.empty = old_pos
 
+    def delete(self):
+        for ent, _ in self.tiles:
+            if ent is None:
+                continue
+            esper.add_component(ent, Deleted())
+
+    def update(
+        self, new_level: int, sprite_server: SpriteServer, levels: LevelsResource
+    ):
+        self.delete()
+        return LevelGridResource.create_level(new_level, sprite_server, levels)
+
 
 @dataclass
 class Text:
@@ -266,7 +317,7 @@ class Centered:
 
 @dataclass
 class LevelDoneEvent:
-    current_level: int
+    pass
 
 
 @dataclass
@@ -310,7 +361,17 @@ class Clickable[T]:
 
 @dataclass
 class NextLevelEvent:
-    next_level: int
+    pass
+
+
+@dataclass
+class EndUi:
+    pass
+
+
+@dataclass
+class Deleted:
+    pass
 
 
 def center_pos(uncentered_pos: ScreenPos, size: tuple[float, float]) -> ScreenPos:
@@ -381,7 +442,9 @@ def render_stage(
 
 
 def move_event(
-    mouse_pos: tuple[float, float], level: LevelGridResource, events: Events
+    mouse_pos: tuple[float, float],
+    level: LevelGridResource,
+    events: Events,
 ):
     tile_pos = level.from_screen_pos(mouse_pos)
     if (
@@ -398,29 +461,34 @@ def move_event(
     old_pos = tile_pos
     level.swap(old_pos)
     if level.incorrect == 0:
-        events.broadcast(LevelDoneEvent(level.level))
+        events.broadcast(LevelDoneEvent())
 
 
 def level_done_process(
-    events: Events, silkscreen_med: AssetId[Font], next_button_image: AssetId[Sprite]
+    events: Events,
+    silkscreen_med: AssetId[Font],
+    next_button_image: AssetId[Sprite],
+    levels: LevelsResource,
+    level_num: int,
 ):
     level_done_events = events.get(LevelDoneEvent)
     if len(level_done_events) == 0:
         return
-    current_level = level_done_events[0].data.current_level
 
     level_text = esper.create_entity()
-    esper.add_component(level_text, Text("Rumah gadang", silkscreen_med))
+    esper.add_component(level_text, Text(levels[level_num].desc, silkscreen_med))
     esper.add_component(
         level_text, ScreenPos(RESOLUTION[0] / 2, Y_SIZE + Y_OFFSET + 40)
     )
     esper.add_component(level_text, Centered())
+    esper.add_component(level_text, EndUi())
 
     button = esper.create_entity()
     esper.add_component(button, Renderable(next_button_image))
     esper.add_component(button, ScreenPos(RESOLUTION[0] / 2, Y_SIZE + Y_OFFSET + 100))
     esper.add_component(button, Centered())
-    esper.add_component(button, Clickable(NextLevelEvent(current_level + 1)))
+    esper.add_component(button, Clickable(NextLevelEvent()))
+    esper.add_component(button, EndUi())
 
 
 def handle_clicks_process(
@@ -437,12 +505,23 @@ def handle_clicks_process(
             events.broadcast(clickable.on_click_event)
 
 
-def next_level_process(events: Events):
+def next_level_process(
+    events: Events,
+    level_num: int,
+    level_text: int,
+    level: LevelGridResource,
+    sprite_server: SpriteServer,
+    levels: LevelsResource,
+) -> tuple[int, LevelGridResource]:
     next_level_events = events.get(NextLevelEvent)
     if len(next_level_events) == 0:
-        return
-    next_level = next_level_events[0].data.next_level
-    print(f"next level: {next_level}")
+        return level_num, level
+    next_level = level_num + 1
+    esper.component_for_entity(level_text, Text).text = f"Level: {next_level}"
+    for ent, _ in esper.get_component(EndUi):
+        esper.add_component(ent, Deleted())
+    level = level.update(next_level, sprite_server, levels)
+    return next_level, level
 
 
 def event_stage(
@@ -454,7 +533,10 @@ def event_stage(
     silkscreen_med: AssetId[Font],
     next_button_image: AssetId[Sprite],
     sprite_server: SpriteServer,
-) -> bool:
+    level_num: int,
+    levels: LevelsResource,
+    level_text: int,
+) -> tuple[bool, int, LevelGridResource]:
     if event.type == pygame.QUIT:
         running = False
     if event.type == pygame.MOUSEBUTTONDOWN:
@@ -466,10 +548,18 @@ def event_stage(
         mouse_pos = (mouse_pos[0] * scale[0], mouse_pos[1] * scale[1])
         move_event(mouse_pos, level_grid_resource, events)
         handle_clicks_process(events, mouse_pos, sprite_server)
-    level_done_process(events, silkscreen_med, next_button_image)
-    next_level_process(events)
+    level_done_process(events, silkscreen_med, next_button_image, levels, level_num)
+    level_num, level_grid_resource = next_level_process(
+        events, level_num, level_text, level_grid_resource, sprite_server, levels
+    )
     events.clear()
-    return running
+    return running, level_num, level_grid_resource
+
+
+def deletion_process():
+    deletion_stack = [ent for ent, _ in esper.get_component(Deleted)]
+    for ent in deletion_stack:
+        esper.delete_entity(ent, immediate=True)
 
 
 def main():
@@ -486,8 +576,9 @@ def main():
 
     next_button_image = sprite_server.add("assets/next_button.png")
 
+    levels = LevelsResource.from_json("assets/images.json")
     level = 0
-    level_grid_resource = LevelGridResource.create_level(level, sprite_server)
+    level_grid_resource = LevelGridResource.create_level(level, sprite_server, levels)
     level_text = esper.create_entity()
     esper.add_component(level_text, Text("Level: 1", silkscreen_large))
     esper.add_component(level_text, ScreenPos(RESOLUTION[0] / 2, Y_OFFSET / 2))
@@ -496,7 +587,7 @@ def main():
     running = True
     while running:
         for event in pygame.event.get():
-            running = event_stage(
+            running, level, level_grid_resource = event_stage(
                 event,
                 running,
                 window,
@@ -505,9 +596,13 @@ def main():
                 silkscreen_med,
                 next_button_image,
                 sprite_server,
+                level,
+                levels,
+                level_text,
             )
 
         render_stage(window, fake_screen, sprite_server, font_server)
+        deletion_process()
         clock.tick()
 
 
