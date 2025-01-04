@@ -1,5 +1,6 @@
 import json
 import random
+from copy import deepcopy
 from dataclasses import dataclass
 from typing import Any
 
@@ -163,14 +164,18 @@ class LevelGridResource:
         grid: list[int | None], moves: int, level_size: int
     ) -> tuple[list[int | None], tuple[int, int]]:
         empty_slot = (0, 0)
-        for _ in range(moves):
-            surroundings = LevelGridResource.get_surroundings(level_size, empty_slot)
-            new_pos = random.choice(surroundings)
-            old_idx = LevelGridResource.get_idx(level_size, empty_slot)
-            new_idx = LevelGridResource.get_idx(level_size, new_pos)
-            grid[old_idx] = grid[new_idx]
-            grid[new_idx] = None
-            empty_slot = new_pos
+        grid_old = deepcopy(grid)
+        while grid_old == grid:
+            for _ in range(moves):
+                surroundings = LevelGridResource.get_surroundings(
+                    level_size, empty_slot
+                )
+                new_pos = random.choice(surroundings)
+                old_idx = LevelGridResource.get_idx(level_size, empty_slot)
+                new_idx = LevelGridResource.get_idx(level_size, new_pos)
+                grid[old_idx] = grid[new_idx]
+                grid[new_idx] = None
+                empty_slot = new_pos
         return (grid, empty_slot)
 
     @staticmethod
