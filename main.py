@@ -10,8 +10,10 @@ from pygame.surface import Surface
 
 FPS = 60
 RESOLUTION = 1280, 720
-Y_OFFSET = 150
+FULL_Y_OFFSET = 150
+X_OFFSET = 100
 Y_SIZE = 420
+X_GAP = 100
 
 
 class Sprite:
@@ -123,11 +125,14 @@ class LevelsResource:
 @dataclass
 class LevelGridResource:
     tiles: list[tuple[int | None, int]]
+    solved: int
     empty: tuple[int, int]
     incorrect: int
     level_size: int
     tile_width: float
     tile_height: float
+    x_offset: float
+    y_offset: float
 
     @staticmethod
     def get_moves_from_level(level: int, level_size: int):
@@ -172,10 +177,23 @@ class LevelGridResource:
     def create_level(level: int, sprite_server: SpriteServer, levels: LevelsResource):
         level_size = level // 4 + 2
         level_area = level_size**2
-
         level_image = levels[level].image
+
+        solved_image = pygame.image.load(f"assets/{level_image}")
+        y_scaling_factor = Y_SIZE / solved_image.get_height()
+        solved_image = pygame.transform.scale_by(solved_image, y_scaling_factor / 2)
+        solved_image_sprite_id = sprite_server.add(solved_image)
+
+        solved = esper.create_entity()
+        esper.add_component(solved, Renderable(solved_image_sprite_id))
+        esper.add_component(solved, Centered())
+
         image = pygame.image.load(f"assets/{level_image}")
-        scaling_factor = Y_SIZE / image.get_height()
+
+        x_offset = RESOLUTION[0] / 4 + solved_image.get_width() / 2 + X_OFFSET
+        x_size = RESOLUTION[0] - x_offset - X_GAP
+        x_scaling_factor = x_size / image.get_width()
+        scaling_factor = min(x_scaling_factor, y_scaling_factor)
         image = pygame.transform.scale_by(image, scaling_factor)
         image_sprite = Sprite(image)
         image_sprite_id = sprite_server.add(image_sprite)
@@ -183,10 +201,17 @@ class LevelGridResource:
             image_sprite.w / level_size,
             image_sprite.h / level_size,
         )
+
+        y_offset = RESOLUTION[1] / 2 - image_sprite.h / 2
+        esper.add_component(
+            solved,
+            ScreenPos(
+                RESOLUTION[0] / 4,
+                RESOLUTION[1] / 2 + image_sprite.h / 2 - solved_image.get_height() / 2,
+            ),
+        )
+
         idxs: list[None | int] = [None]
-        empty = (
-            RESOLUTION[0] - image_sprite.w
-        )  # Yes, I know this can go negative. No, I don't care
         for i in range(level_area - 1):
             idxs.append(i)
 
@@ -196,7 +221,6 @@ class LevelGridResource:
 
         sprites = []
         incorrect = 0
-        x_offset = empty / 2
         for i in range(level_area):
             idx = idxs[i]
             if idx is None:
@@ -216,12 +240,20 @@ class LevelGridResource:
             tile_entity = esper.create_entity()
             esper.add_component(tile_entity, Renderable(tile_sprite))
             esper.add_component(
-                tile_entity, ScreenPos(pos_x + x_offset, pos_y + Y_OFFSET)
+                tile_entity, ScreenPos(pos_x + x_offset, pos_y + y_offset)
             )
             sprites.append((tile_entity, idx))
 
         return LevelGridResource(
-            sprites, empty_slot, incorrect, level_size, tile_width, tile_height
+            sprites,
+            solved,
+            empty_slot,
+            incorrect,
+            level_size,
+            tile_width,
+            tile_height,
+            x_offset,
+            y_offset,
         )
 
     def __getitem__(self, pos: tuple[int, int]) -> tuple[int | None, int]:
@@ -231,11 +263,6 @@ class LevelGridResource:
     def __setitem__(self, pos: tuple[int, int], value: tuple[int | None, int]):
         idx = LevelGridResource.get_idx(self.level_size, pos)
         self.tiles[idx] = value
-
-    def get_x_offset(self) -> float:
-        full = self.tile_width * self.level_size
-        empty = RESOLUTION[0] - full
-        return empty / 2
 
     def is_correct(self, check_pos: tuple[int, int], for_pos: tuple[int, int]) -> bool:
         correct_idx = LevelGridResource.get_idx(self.level_size, check_pos)
@@ -251,15 +278,13 @@ class LevelGridResource:
             screen_pos = screen_pos
         else:
             assert False
-        x_offset = self.get_x_offset()
-        level_pos = (screen_pos[0] - x_offset, screen_pos[1] - Y_OFFSET)
+        level_pos = (screen_pos[0] - self.x_offset, screen_pos[1] - self.y_offset)
         tile_pos = (level_pos[0] // self.tile_width, level_pos[1] // self.tile_height)
         return (int(tile_pos[0]), int(tile_pos[1]))
 
     def to_screen_pos(self, tile_pos: tuple[int, int]) -> ScreenPos:
         level_pos = (tile_pos[0] * self.tile_width, tile_pos[1] * self.tile_height)
-        x_offset = self.get_x_offset()
-        screen_pos = (level_pos[0] + x_offset, level_pos[1] + Y_OFFSET)
+        screen_pos = (level_pos[0] + self.x_offset, level_pos[1] + self.y_offset)
         return ScreenPos(*screen_pos)
 
     def swap(self, old_pos: tuple[int, int]):
@@ -291,6 +316,7 @@ class LevelGridResource:
             if ent is None:
                 continue
             esper.add_component(ent, Deleted())
+        esper.add_component(self.solved, Deleted())
 
     def update(
         self, new_level: int, sprite_server: SpriteServer, levels: LevelsResource
@@ -478,14 +504,16 @@ def level_done_process(
     level_text = esper.create_entity()
     esper.add_component(level_text, Text(levels[level_num].desc, silkscreen_med))
     esper.add_component(
-        level_text, ScreenPos(RESOLUTION[0] / 2, Y_SIZE + Y_OFFSET + 40)
+        level_text, ScreenPos(RESOLUTION[0] / 2, Y_SIZE + FULL_Y_OFFSET + 40)
     )
     esper.add_component(level_text, Centered())
     esper.add_component(level_text, EndUi())
 
     button = esper.create_entity()
     esper.add_component(button, Renderable(next_button_image))
-    esper.add_component(button, ScreenPos(RESOLUTION[0] / 2, Y_SIZE + Y_OFFSET + 100))
+    esper.add_component(
+        button, ScreenPos(RESOLUTION[0] / 2, Y_SIZE + FULL_Y_OFFSET + 100)
+    )
     esper.add_component(button, Centered())
     esper.add_component(button, Clickable(NextLevelEvent()))
     esper.add_component(button, EndUi())
@@ -581,7 +609,7 @@ def main():
     level_grid_resource = LevelGridResource.create_level(level, sprite_server, levels)
     level_text = esper.create_entity()
     esper.add_component(level_text, Text("Level: 1", silkscreen_large))
-    esper.add_component(level_text, ScreenPos(RESOLUTION[0] / 2, Y_OFFSET / 2))
+    esper.add_component(level_text, ScreenPos(RESOLUTION[0] / 2, FULL_Y_OFFSET / 2))
     esper.add_component(level_text, Centered())
 
     running = True
