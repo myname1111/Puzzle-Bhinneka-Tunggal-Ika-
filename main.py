@@ -433,7 +433,7 @@ def render_stage(
     font_server: AssetServer[Font],
 ):
     window.fill((0, 0, 0))
-    fake_screen.fill((0, 0, 0))
+    fake_screen.fill((51, 88, 114))
     render_sprites_process(fake_screen, sprite_server)
     render_text_process(fake_screen, font_server)
     scaled = pygame.transform.smoothscale(fake_screen, window.get_size())
