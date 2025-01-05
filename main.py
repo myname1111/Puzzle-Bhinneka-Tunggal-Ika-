@@ -2,6 +2,7 @@ import json
 import random
 from copy import deepcopy
 from dataclasses import dataclass
+from math import floor
 from typing import Any
 
 import esper
@@ -15,6 +16,8 @@ FULL_Y_OFFSET = 150
 X_OFFSET = 100
 Y_SIZE = 420
 X_GAP = 100
+MULT_EXP = 1.2
+MULT_CONST = 15
 
 
 class Sprite:
@@ -134,6 +137,7 @@ class LevelGridResource:
     tile_height: float
     x_offset: float
     y_offset: float
+    timer_duration: float
 
     @staticmethod
     def get_moves_from_level(level: int, level_size: int):
@@ -249,6 +253,9 @@ class LevelGridResource:
             )
             sprites.append((tile_entity, idx))
 
+        timer_duration_multiplier = MULT_EXP ** (-level)
+        timer_duration = level_area * timer_duration_multiplier * MULT_CONST
+
         return LevelGridResource(
             sprites,
             solved,
@@ -259,6 +266,7 @@ class LevelGridResource:
             tile_height,
             x_offset,
             y_offset,
+            timer_duration,
         )
 
     def __getitem__(self, pos: tuple[int, int]) -> tuple[int | None, int]:
@@ -545,16 +553,18 @@ def next_level_process(
     level: LevelGridResource,
     sprite_server: SpriteServer,
     levels: LevelsResource,
-) -> tuple[int, LevelGridResource]:
+    time_start: float,
+) -> tuple[int, LevelGridResource, float]:
     next_level_events = events.get(NextLevelEvent)
     if len(next_level_events) == 0:
-        return level_num, level
+        return level_num, level, time_start
     next_level = level_num + 1
     esper.component_for_entity(level_text, Text).text = f"Level: {next_level + 1}"
     for ent, _ in esper.get_component(EndUi):
         esper.add_component(ent, Deleted())
     level = level.update(next_level, sprite_server, levels)
-    return next_level, level
+    time_start = pygame.time.get_ticks() / 1000
+    return next_level, level, time_start
 
 
 def event_stage(
@@ -569,7 +579,8 @@ def event_stage(
     level_num: int,
     levels: LevelsResource,
     level_text: int,
-) -> tuple[bool, int, LevelGridResource]:
+    time_start: float,
+) -> tuple[bool, int, LevelGridResource, float]:
     if event.type == pygame.QUIT:
         running = False
     if event.type == pygame.MOUSEBUTTONDOWN:
@@ -582,17 +593,30 @@ def event_stage(
         move_event(mouse_pos, level_grid_resource, events)
         handle_clicks_process(events, mouse_pos, sprite_server)
     level_done_process(events, silkscreen_med, next_button_image, levels, level_num)
-    level_num, level_grid_resource = next_level_process(
-        events, level_num, level_text, level_grid_resource, sprite_server, levels
+    level_num, level_grid_resource, time_start = next_level_process(
+        events,
+        level_num,
+        level_text,
+        level_grid_resource,
+        sprite_server,
+        levels,
+        time_start,
     )
     events.clear()
-    return running, level_num, level_grid_resource
+    return running, level_num, level_grid_resource, time_start
 
 
 def deletion_process():
     deletion_stack = [ent for ent, _ in esper.get_component(Deleted)]
     for ent in deletion_stack:
         esper.delete_entity(ent, immediate=True)
+
+
+def update_timer(level: LevelGridResource, time_start: float, time_text: int):
+    time_elapsed = pygame.time.get_ticks() / 1000 - time_start
+    time_left = level.timer_duration - time_elapsed
+    display_time = floor(time_left * 100) / 100.0
+    esper.component_for_entity(time_text, Text).text = f"Time Left: {display_time}"
 
 
 def main():
@@ -617,10 +641,15 @@ def main():
     esper.add_component(level_text, ScreenPos(RESOLUTION[0] / 2, FULL_Y_OFFSET / 2))
     esper.add_component(level_text, Centered())
 
+    time_start = pygame.time.get_ticks() / 1000
+    time_text = esper.create_entity()
+    esper.add_component(time_text, Text(f"Time Left: {time_start}", silkscreen_med))
+    esper.add_component(time_text, ScreenPos(0, 0))
+
     running = True
     while running:
         for event in pygame.event.get():
-            running, level, level_grid_resource = event_stage(
+            running, level, level_grid_resource, time_start = event_stage(
                 event,
                 running,
                 window,
@@ -632,8 +661,10 @@ def main():
                 level,
                 levels,
                 level_text,
+                time_start,
             )
 
+        update_timer(level_grid_resource, time_start, time_text)
         render_stage(window, fake_screen, sprite_server, font_server)
         deletion_process()
         clock.tick()
