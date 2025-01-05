@@ -793,11 +793,12 @@ def level_done_process(
     next_button_image: AssetId[Sprite],
     levels: LevelsResource,
     level_num: int,
-):
+    run_timer: bool,
+) -> bool:
     """Created the end ui"""
     level_done_events = events.get(LevelDoneEvent)
     if len(level_done_events) == 0:
-        return
+        return run_timer
 
     level_text = esper.create_entity()
     esper.add_component(level_text, Text(levels[level_num].desc, silkscreen_med))
@@ -815,6 +816,8 @@ def level_done_process(
     esper.add_component(button, Centered())
     esper.add_component(button, Clickable(NextLevelEvent()))
     esper.add_component(button, EndUi())
+    run_timer = False
+    return run_timer
 
 
 def handle_clicks_process(
@@ -840,18 +843,20 @@ def next_level_process(
     sprite_server: SpriteServer,
     levels: LevelsResource,
     time_start: float,
-) -> tuple[int, LevelGridResource, float]:
+    run_timer: bool,
+) -> tuple[int, LevelGridResource, float, bool]:
     """Move to the next level"""
     next_level_events = events.get(NextLevelEvent)
     if len(next_level_events) == 0:
-        return level_num, level, time_start
+        return level_num, level, time_start, run_timer
     next_level = level_num + 1
     esper.component_for_entity(level_text, Text).text = f"Level: {next_level + 1}"
     for ent, _ in esper.get_component(EndUi):
         esper.add_component(ent, Deleted())
     level = level.update(next_level, sprite_server, levels)
     time_start = pygame.time.get_ticks() / 1000
-    return next_level, level, time_start
+    run_timer = True
+    return next_level, level, time_start, run_timer
 
 
 def event_stage(
@@ -868,7 +873,8 @@ def event_stage(
     level_text: int,
     time_start: float,
     playlist: Playlist,
-) -> tuple[bool, int, LevelGridResource, float]:
+    run_timer: bool,
+) -> tuple[bool, int, LevelGridResource, float, bool]:
     """Handles all events for the main game"""
     if event.type == pygame.QUIT:
         running = False
@@ -883,8 +889,10 @@ def event_stage(
         handle_clicks_process(events, mouse_pos, sprite_server)
     if event.type == pygame.USEREVENT:
         playlist.update()
-    level_done_process(events, silkscreen_med, next_button_image, levels, level_num)
-    level_num, level_grid_resource, time_start = next_level_process(
+    run_timer = level_done_process(
+        events, silkscreen_med, next_button_image, levels, level_num, run_timer
+    )
+    level_num, level_grid_resource, time_start, run_timer = next_level_process(
         events,
         level_num,
         level_text,
@@ -892,9 +900,10 @@ def event_stage(
         sprite_server,
         levels,
         time_start,
+        run_timer,
     )
     events.clear()
-    return running, level_num, level_grid_resource, time_start
+    return running, level_num, level_grid_resource, time_start, run_timer
 
 
 def deletion_process():
@@ -911,8 +920,12 @@ def get_time_left(level: LevelGridResource, time_start: float):
     return time_left
 
 
-def update_timer(level: LevelGridResource, time_start: float, time_text: int):
+def update_timer(
+    level: LevelGridResource, time_start: float, time_text: int, run_timer: bool
+):
     """Update the timer's text"""
+    if not run_timer:
+        return
     time_left = get_time_left(level, time_start)
     display_time = floor(time_left * 100) / 100.0
     esper.component_for_entity(time_text, Text).text = f"Time Left: {display_time}"
@@ -956,11 +969,12 @@ def main_game(
     time_text = esper.create_entity()
     esper.add_component(time_text, Text(f"Time Left: {time_start}", silkscreen_med))
     esper.add_component(time_text, ScreenPos(0, 0))
+    run_timer = True
 
     running = True
     while running:
         for event in pygame.event.get():
-            running, level, level_grid_resource, time_start = event_stage(
+            running, level, level_grid_resource, time_start, run_timer = event_stage(
                 event,
                 running,
                 window,
@@ -974,9 +988,10 @@ def main_game(
                 level_text,
                 time_start,
                 playlist,
+                run_timer,
             )
 
-        update_timer(level_grid_resource, time_start, time_text)
+        update_timer(level_grid_resource, time_start, time_text, run_timer)
         operation = lose_process(level_grid_resource, time_start, level)
         if operation != Operations.CONTINUE:
             return operation
