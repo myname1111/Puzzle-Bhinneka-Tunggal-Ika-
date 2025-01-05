@@ -1,3 +1,19 @@
+"""# Game architecture
+
+This code is organized into entities, components, processes (systems), stages, resources, events, worlds, assets
+Here is a brief explanation of each:
+- Entities: Something which contains no other data than its ID which points to components associated with said entity. They are all simple classes
+- Components: Components store data and are associated to an entity
+- Processes: Processes, or as they're more commonly known, "systems", are functions which operate on all entities having some components. They are responsible for almost all of the logic in the code
+- Stages: Stages are simply groups of processes, there are two main stages, event and render:
+    - The event stage is simply the stage where processes that require events, be that native pygame events or the events that I will explain later, are run
+    - The render stage is responsible for rendering all the sprites and text and whatever else that needs to be rendered. It also deals with clearing the screen
+- Resources: Resources represent the current game state which is independent of any individual entity. By that, I mean that no entity is associated with said game state. Examples of resources include: The servers, the current level and level information, as well as special entities
+- Events: Events, not to be confused with native pygame events, are things which are temporary and visible to all entities. They represent signals, flags, and can be broadcast. Some processes run only if an event was broadcast. Events are handled by the EventServer
+- Worlds: Worlds are simply different stages or screen of the game. There are three main stages: The start menu, the main game, and the lose screen
+- Assets: Assets are anything that needs to be loaded before hand and are too perfomance-intensive to move around. Thus they are handled by the AssetServer which gives an AssetId which points to the asset when an Asset is added to the AssetServer. The AssetId can be used as a lightweight pointer to the actual Asset
+"""
+
 import json
 import os
 import random
@@ -21,8 +37,17 @@ MULT_EXP = 1.2
 MULT_CONST = 15
 
 
+"""A sprite is just an image"""
+
+
 class Sprite:
     def __init__(self, image: str | pygame.Surface, depth: int = 0):
+        """Intializes the sprite
+
+        Keyword arguments:
+        - Image: Can be either a string or a Surface. In the former case, it'd assume that it was a path to the image and load it
+        - Depth: The depth or z value of the image (default: 0)
+        """
         if type(image) is str:
             self.image: Surface = pygame.image.load(image)
         elif type(image) is Surface:
@@ -32,9 +57,15 @@ class Sprite:
         self.h: int = self.image.get_height()
 
 
+"""A pointer to an asset of type T"""
+
+
 @dataclass
 class AssetId[T]:
     id: int
+
+
+"""A server to handle assets of type T"""
 
 
 @dataclass
@@ -42,11 +73,24 @@ class AssetServer[T]:
     assets: list[T]
 
     def add(self, new: T) -> AssetId[T]:
+        """Add an asset of type T. Returns the AssetId of the asset
+
+        Keyword arguments:
+        - new: The asset to be added
+        """
         self.assets.append(new)
         return AssetId(len(self.assets) - 1)
 
     def get(self, idx: AssetId[T]) -> T:
+        """Get the asset from the AssetId
+
+        Keyword arguments:
+        - idx: The AssetId
+        """
         return self.assets[idx.id]
+
+
+"""A special type of AssetServer to handle sprites"""
 
 
 @dataclass
@@ -67,15 +111,24 @@ class SpriteServer:
         return self.sprites.get(idx)
 
 
+"""Represents an image on a spritesheet"""
+
+
 @dataclass
 class SpriteSheetId:
     sprite_sheet_id: AssetId[Sprite]
     rect: pygame.Rect
 
 
+"""Represents anything that can be rendered"""
+
+
 @dataclass
 class Renderable:
     sprite_id: AssetId[Sprite] | SpriteSheetId
+
+
+"""Represents the position of something on the screen"""
 
 
 @dataclass
@@ -85,7 +138,15 @@ class ScreenPos:
 
     @staticmethod
     def from_tuple(tup: tuple[float, float]):
+        """Creates a ScreenPos from a tuple
+
+        Keyword arguments:
+        - from_tuple: The tuple to create it from
+        """
         return ScreenPos(*tup)
+
+
+"""Represents the relevant information to generate a Level"""
 
 
 @dataclass
@@ -95,9 +156,17 @@ class LevelInfo:
 
     @staticmethod
     def from_dict(in_dict: dict[str, str]):
+        """Creates the LevelInfo from a dictionary
+
+        Keyword arguments:
+        - in_dict: The dictionary to create it from
+        """
         image = in_dict["image_name"]
         desc = in_dict["desc"]
         return LevelInfo(image, desc)
+
+
+"""A level generator"""
 
 
 @dataclass
@@ -107,6 +176,13 @@ class LevelsResource:
 
     @staticmethod
     def from_json(path: str, shuffle=True, seed=0):
+        """Load all the levels from a json file
+
+        Keyword arguments:
+        - path: Path to the json file
+        - shuffle: Whether or not to shuffle the list (default: True)
+        - seed: Sets the seed if it were to shuffle
+        """
         with open(path) as file:
             in_str = file.read()
         in_list = json.loads(in_str)
@@ -127,6 +203,9 @@ class LevelsResource:
         return self.levels[actual_idx]
 
 
+"""The ingame level that is current being played"""
+
+
 @dataclass
 class LevelGridResource:
     tiles: list[tuple[int | None, int]]
@@ -142,12 +221,24 @@ class LevelGridResource:
 
     @staticmethod
     def get_moves_from_level(level: int, level_size: int):
+        """Gets the minimum amount of moves that the shuffler should make for each level
+
+        Keyword arguments:
+        - level: The current level
+        - level_size: The current level's size
+        """
         level_area = level_size**2
         moves = (level + 2) * level_area
         return min(moves, level_area * 16)
 
     @staticmethod
     def get_surroundings(level_size: int, pos: tuple[int, int]):
+        """Gets the surrounding valid tiles
+
+        Keyword arguments:
+        - level_size: The size of the level
+        - pos: The position to be checked
+        """
         out = []
         if pos[0] > 0:
             out.append((pos[0] - 1, pos[1]))
@@ -162,12 +253,25 @@ class LevelGridResource:
 
     @staticmethod
     def get_idx(row_size: int, pos: tuple[int, int]) -> int:
+        """Gets the idx of a pos
+
+        Keyword arguments:
+        - row_size: The size of each row
+        - pos: The pos
+        """
         return pos[1] * row_size + pos[0]
 
     @staticmethod
     def shuffle(
         grid: list[int | None], moves: int, level_size: int
     ) -> tuple[list[int | None], tuple[int, int]]:
+        """Shuffles the level
+
+        Keyword arguments:
+        - grid: The grid to be shuffled
+        - moves: The amount of moves to make
+        - level_size: THe size of the level
+        """
         empty_slot = (0, 0)
         grid_old = deepcopy(grid)
         while grid_old == grid:
@@ -185,6 +289,13 @@ class LevelGridResource:
 
     @staticmethod
     def create_level(level: int, sprite_server: SpriteServer, levels: LevelsResource):
+        """Creates a level
+
+        Keyword arguments:
+        - level: The current level
+        - sprite_server: The sprite server
+        - levels: The information for the levels
+        """
         level_size = level // 4 + 2
         level_area = level_size**2
         level_image = levels[level].image
@@ -279,6 +390,12 @@ class LevelGridResource:
         self.tiles[idx] = value
 
     def is_correct(self, check_pos: tuple[int, int], for_pos: tuple[int, int]) -> bool:
+        """Checks if a position is correct if it were in another position
+
+        Keyword arguments:
+        - check_pos: The position it will check to
+        - for_pos: The position that is checked
+        """
         correct_idx = LevelGridResource.get_idx(self.level_size, check_pos)
         actual_idx = self[for_pos][1]
         return correct_idx == actual_idx
@@ -286,6 +403,11 @@ class LevelGridResource:
     def from_screen_pos(
         self, screen_pos: ScreenPos | tuple[float, float]
     ) -> tuple[int, int]:
+        """Converts from a ScreenPos to a tile position
+
+        Keyword arguments:
+        - screen_pos: The screen pos to convert
+        """
         if type(screen_pos) is ScreenPos:
             screen_pos = (screen_pos.x, screen_pos.y)
         elif type(screen_pos) is tuple:
@@ -297,11 +419,21 @@ class LevelGridResource:
         return (int(tile_pos[0]), int(tile_pos[1]))
 
     def to_screen_pos(self, tile_pos: tuple[int, int]) -> ScreenPos:
+        """Converts from a tile position to a ScreenPos
+
+        Keyword arguments:
+        - tile_pos: The tile pos to convert
+        """
         level_pos = (tile_pos[0] * self.tile_width, tile_pos[1] * self.tile_height)
         screen_pos = (level_pos[0] + self.x_offset, level_pos[1] + self.y_offset)
         return ScreenPos(*screen_pos)
 
     def swap(self, old_pos: tuple[int, int]):
+        """Swaps a tile with the empty tile
+
+        Keyword arguments:
+        - old_pos: The position of the tile to be swapped
+        """
         new_pos = self.empty
         offset = 0
         if self.is_correct(old_pos, old_pos):
@@ -326,6 +458,7 @@ class LevelGridResource:
         self.empty = old_pos
 
     def delete(self):
+        """Deletes all the entities associated with the level"""
         for ent, _ in self.tiles:
             if ent is None:
                 continue
@@ -335,8 +468,18 @@ class LevelGridResource:
     def update(
         self, new_level: int, sprite_server: SpriteServer, levels: LevelsResource
     ):
+        """Updates it to a new level
+
+        Keyword arguments:
+        - new_level: The new level
+        - sprite_server: The sprite server
+        - levels: The resource containing the information for the levels
+        """
         self.delete()
         return LevelGridResource.create_level(new_level, sprite_server, levels)
+
+
+"""A component representing text"""
 
 
 @dataclass
@@ -347,12 +490,23 @@ class Text:
     antialias: bool = True
 
     def render(self, font_server: AssetServer[Font]) -> Surface:
+        """Render the text to a Surface
+
+        Keyword arguments:
+        - font_server: The font server
+        """
         font = font_server.get(self.font_id)
         return font.render(self.text, self.antialias, self.color)
 
 
+"""A component. Any entity with this component will be centered"""
+
+
 class Centered:
     pass
+
+
+"""This event is broadcast when the level is done, i.e, all the tiles are in place"""
 
 
 @dataclass
@@ -360,9 +514,15 @@ class LevelDoneEvent:
     pass
 
 
+"""An event"""
+
+
 @dataclass
 class Event[T]:
     data: T
+
+
+"""This class manages events"""
 
 
 @dataclass
@@ -371,7 +531,12 @@ class Events:
     buf2: dict[type[Any], list[Event[Any]]]
     broadcast_to_1: bool
 
-    def broadcast[T](self, event: T):
+    def broadcast(self, event: object):
+        """Broadcast an event
+
+        Keyword arguments:
+        - event: The event to be broadcast
+        """
         events = self.buf1 if self.broadcast_to_1 else self.buf2
 
         if type(event) in events:
@@ -380,6 +545,7 @@ class Events:
             events[type(event)] = [Event(event)]
 
     def clear(self):
+        """Updates the event. Clears all old events"""
         if self.broadcast_to_1:
             self.buf2 = {}
         else:
@@ -387,6 +553,7 @@ class Events:
         self.broadcast_to_1 = not self.broadcast_to_1
 
     def get[T](self, event_type: type[T]) -> list[Event[T]]:
+        """Gets all events of a certain type"""
         events = self.buf2 if self.broadcast_to_1 else self.buf1
         try:
             return events[event_type]
@@ -394,9 +561,15 @@ class Events:
             return []
 
 
+"""Represents something that is clickable. Broadcasts an event when clicked"""
+
+
 @dataclass
 class Clickable[T]:
     on_click_event: T
+
+
+"""An event which is broadcast when we continue to the nect level"""
 
 
 @dataclass
@@ -404,14 +577,23 @@ class NextLevelEvent:
     pass
 
 
+"""An entity with this component is part of the end UI, and will subsequently be deleted after it transitions to the next level"""
+
+
 @dataclass
 class EndUi:
     pass
 
 
+"""An entity to be deleted"""
+
+
 @dataclass
 class Deleted:
     pass
+
+
+"""Operations to change the world"""
 
 
 class Operations:
@@ -424,9 +606,15 @@ class Operations:
         level: int
 
 
+"""An event that will change the world"""
+
+
 @dataclass
 class OperationEvent:
     operation: int
+
+
+"""The Highest levels reached"""
 
 
 @dataclass
@@ -435,6 +623,7 @@ class HighestLevels:
 
     @staticmethod
     def from_json(path: str):
+        """Loads from a json file"""
         with open(path) as file:
             in_str = file.read()
 
@@ -443,12 +632,17 @@ class HighestLevels:
         return HighestLevels(absolute_highest_level)
 
     def to_json(self, path: str):
+        """Save to a json file"""
         out_str = json.dumps({"absolute_highest_level": self.absolute_highest_level})
         with open(path, "w") as file:
             file.write(out_str)
 
     def update(self, new: int):
+        """Update the highest levels reached"""
         self.absolute_highest_level = max(self.absolute_highest_level, new)
+
+
+"""The playlist in charged of playing the music"""
 
 
 @dataclass
@@ -462,6 +656,12 @@ class Playlist:
 
     @staticmethod
     def load(path: str, seed: int):
+        """Loads the play list from a path
+
+        Keyword arguments:
+        - path: The path to the playlist
+        - seed: The seed to which it is shuffled
+        """
         random.seed(seed)
         fn = os.listdir(f"{path}/FN/")
         fn = [f"assets/music/FN/{song}" for song in fn]
@@ -475,6 +675,7 @@ class Playlist:
         return Playlist(fn, nfn, fn, 0, True, 0)
 
     def update(self):
+        """Updates the song"""
         self.idx += 1
         if self.is_fn and self.idx >= len(self.playlist) - 1:
             self.playlist.extend(self.nfn)
@@ -489,10 +690,12 @@ class Playlist:
 
 
 def center_pos(uncentered_pos: ScreenPos, size: tuple[float, float]) -> ScreenPos:
+    """Centers a position"""
     return ScreenPos(uncentered_pos.x - size[0] / 2, uncentered_pos.y - size[1] / 2)
 
 
-def get_component_optional(entity: int, component):
+def get_component_optional[T](entity: int, component: type[T]) -> T | None:
+    """Get the component for an entity. If it doesn't exist returns None"""
     try:
         out_component = esper.component_for_entity(entity, component)
         return out_component
@@ -503,6 +706,7 @@ def get_component_optional(entity: int, component):
 def get_size(
     renderable: Renderable, sprite_server: SpriteServer
 ) -> tuple[float, float]:
+    """Gets the size of a renderable thing"""
     if type(renderable.sprite_id) is AssetId:
         sprite = sprite_server.get(renderable.sprite_id)
         return sprite.w, sprite.h
@@ -513,6 +717,7 @@ def get_size(
 
 
 def render_sprites_process(fake_screen: Surface, sprite_server: SpriteServer):
+    """Renders all renderables"""
     for ent, (renderable, screen_pos) in esper.get_components(Renderable, ScreenPos):
         centered = get_component_optional(ent, Centered)
         size = get_size(renderable, sprite_server)
@@ -531,6 +736,7 @@ def render_sprites_process(fake_screen: Surface, sprite_server: SpriteServer):
 
 
 def render_text_process(fake_screen: Surface, font_server: AssetServer[Font]):
+    """Renders all the text"""
     for ent, (text, screen_pos) in esper.get_components(Text, ScreenPos):
         centered = get_component_optional(ent, Centered)
         surface = text.render(font_server)
@@ -547,6 +753,7 @@ def render_stage(
     font_server: AssetServer[Font],
     background_color: tuple[int, int, int],
 ):
+    """The render stage"""
     window.fill((0, 0, 0))
     fake_screen.fill(background_color)
     render_sprites_process(fake_screen, sprite_server)
@@ -561,6 +768,7 @@ def move_event(
     level: LevelGridResource,
     events: Events,
 ):
+    """Moves a tile when clicked on"""
     tile_pos = level.from_screen_pos(mouse_pos)
     if (
         tile_pos[0] < 0
@@ -586,6 +794,7 @@ def level_done_process(
     levels: LevelsResource,
     level_num: int,
 ):
+    """Created the end ui"""
     level_done_events = events.get(LevelDoneEvent)
     if len(level_done_events) == 0:
         return
@@ -611,6 +820,7 @@ def level_done_process(
 def handle_clicks_process(
     events: Events, mouse_pos: tuple[float, float], sprite_server: SpriteServer
 ):
+    """Handle clicks. All clickable entities will broadcast their events"""
     for ent, (renderable, screen_pos, clickable) in esper.get_components(
         Renderable, ScreenPos, Clickable
     ):
@@ -631,6 +841,7 @@ def next_level_process(
     levels: LevelsResource,
     time_start: float,
 ) -> tuple[int, LevelGridResource, float]:
+    """Move to the next level"""
     next_level_events = events.get(NextLevelEvent)
     if len(next_level_events) == 0:
         return level_num, level, time_start
@@ -658,6 +869,7 @@ def event_stage(
     time_start: float,
     playlist: Playlist,
 ) -> tuple[bool, int, LevelGridResource, float]:
+    """Handles all events for the main game"""
     if event.type == pygame.QUIT:
         running = False
     if event.type == pygame.MOUSEBUTTONDOWN:
@@ -686,18 +898,21 @@ def event_stage(
 
 
 def deletion_process():
+    """Delete all entities marked as deleted"""
     deletion_stack = [ent for ent, _ in esper.get_component(Deleted)]
     for ent in deletion_stack:
         esper.delete_entity(ent, immediate=True)
 
 
 def get_time_left(level: LevelGridResource, time_start: float):
+    """Get the time left"""
     time_elapsed = pygame.time.get_ticks() / 1000 - time_start
     time_left = level.timer_duration - time_elapsed
     return time_left
 
 
 def update_timer(level: LevelGridResource, time_start: float, time_text: int):
+    """Update the timer's text"""
     time_left = get_time_left(level, time_start)
     display_time = floor(time_left * 100) / 100.0
     esper.component_for_entity(time_text, Text).text = f"Time Left: {display_time}"
@@ -706,6 +921,7 @@ def update_timer(level: LevelGridResource, time_start: float, time_text: int):
 def lose_process(
     level: LevelGridResource, time_start: float, level_num: int
 ) -> int | Operations.Lose:
+    """Change to the lose screen once there is no time left"""
     time_left = get_time_left(level, time_start)
     if time_left <= 0:
         return Operations.Lose(level_num)
@@ -716,6 +932,7 @@ def lose_process(
 def main_game(
     window: pygame.Surface, fake_screen: Surface, playlist: Playlist
 ) -> int | Operations.Lose:
+    """The main game"""
     clock = pygame.time.Clock()
     background_color = (51, 88, 114)
 
@@ -778,6 +995,7 @@ def lose_event_stage(
     sprite_server: SpriteServer,
     playlist: Playlist,
 ) -> bool:
+    """The event stage for the lose world"""
     if event.type == pygame.QUIT:
         running = False
     if event.type == pygame.MOUSEBUTTONDOWN:
@@ -795,6 +1013,7 @@ def lose_event_stage(
 
 
 def operation_process(events: Events) -> int:
+    """Does an operation given an event"""
     operations = events.get(OperationEvent)
     if len(operations) > 0:
         return operations[-1].data.operation
@@ -808,6 +1027,7 @@ def lose(
     highest_levels: HighestLevels,
     playlist: Playlist,
 ) -> int:
+    """The lose world"""
     clock = pygame.time.Clock()
     background_color = (216, 33, 33)
 
@@ -886,6 +1106,7 @@ def start_event_stage(
     playlist: Playlist,
     running: bool,
 ) -> bool:
+    """The event loop for the start world"""
     if event.type == pygame.QUIT:
         running = False
     if event.type == pygame.MOUSEBUTTONDOWN:
@@ -904,6 +1125,7 @@ def start_event_stage(
 def start(
     window: Surface, fake_screen: Surface, playlist: Playlist
 ) -> int | Operations.Lose:
+    """The start world"""
     clock = pygame.time.Clock()
     background_color = (51, 88, 114)
 
