@@ -428,6 +428,28 @@ class OperationEvent:
     operation: int
 
 
+@dataclass
+class HighestLevels:
+    absolute_highest_level: int
+
+    @staticmethod
+    def from_json(path: str):
+        with open(path) as file:
+            in_str = file.read()
+
+        in_dict = json.loads(in_str)
+        absolute_highest_level = in_dict["absolute_highest_level"]
+        return HighestLevels(absolute_highest_level)
+
+    def to_json(self, path: str):
+        out_str = json.dumps({"absolute_highest_level": self.absolute_highest_level})
+        with open(path, "w") as file:
+            file.write(out_str)
+
+    def update(self, new: int):
+        self.absolute_highest_level = max(self.absolute_highest_level, new)
+
+
 def center_pos(uncentered_pos: ScreenPos, size: tuple[float, float]) -> ScreenPos:
     return ScreenPos(uncentered_pos.x - size[0] / 2, uncentered_pos.y - size[1] / 2)
 
@@ -645,7 +667,7 @@ def lose_process(
 ) -> int | Operations.Lose:
     time_left = get_time_left(level, time_start)
     if time_left <= 0:
-        return Operations.Lose(level_num - 1)
+        return Operations.Lose(level_num)
     else:
         return Operations.CONTINUE
 
@@ -732,7 +754,12 @@ def operation_process(events: Events) -> int:
     return Operations.CONTINUE
 
 
-def lose(window: pygame.Surface, fake_screen: Surface, last_level: int) -> int:
+def lose(
+    window: pygame.Surface,
+    fake_screen: Surface,
+    last_level: int,
+    highest_levels: HighestLevels,
+) -> int:
     clock = pygame.time.Clock()
     background_color = (216, 33, 33)
 
@@ -748,14 +775,20 @@ def lose(window: pygame.Surface, fake_screen: Surface, last_level: int) -> int:
     esper.add_component(lose_text, Centered())
 
     level_text = esper.create_entity()
-    esper.add_component(level_text, Text(f"Level: {last_level}", silkscreen_med))
+    esper.add_component(level_text, Text(f"Last Level: {last_level}", silkscreen_med))
     esper.add_component(
         level_text, ScreenPos(RESOLUTION[0] / 2, RESOLUTION[1] / 2 - 50)
     )
     esper.add_component(level_text, Centered())
 
     hs_text = esper.create_entity()
-    esper.add_component(hs_text, Text("Highest Level: 20", silkscreen_med))
+    esper.add_component(
+        hs_text,
+        Text(
+            f"Absolute Highest Level: {highest_levels.absolute_highest_level}",
+            silkscreen_med,
+        ),
+    )
     esper.add_component(hs_text, ScreenPos(RESOLUTION[0] / 2, RESOLUTION[1] / 2))
     esper.add_component(hs_text, Centered())
 
@@ -799,19 +832,22 @@ def main():
     pygame.init()
     window = pygame.display.set_mode(RESOLUTION, pygame.RESIZABLE)
     fake_screen = Surface(RESOLUTION)
+    highest_levels = HighestLevels.from_json("data/score_data.json")
 
     while True:
         operation = main_game(window, fake_screen)
         if operation == Operations.QUIT:
             break
         if type(operation) is Operations.Lose:
+            highest_levels.update(operation.level)
             esper.switch_world("lose")
             esper.delete_world("default")
-            operation = lose(window, fake_screen, operation.level)
+            operation = lose(window, fake_screen, operation.level, highest_levels)
         if operation == Operations.QUIT:
             break
         esper.switch_world("default")
         esper.delete_world("lose")
+    highest_levels.to_json("data/score_data.json")
 
 
 if __name__ == "__main__":
