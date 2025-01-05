@@ -413,6 +413,17 @@ class Deleted:
     pass
 
 
+class Operations:
+    QUIT = 0
+    CONTINUE = 1
+    PROGRESS = 2
+
+
+@dataclass
+class OperationEvent:
+    operation: int
+
+
 def center_pos(uncentered_pos: ScreenPos, size: tuple[float, float]) -> ScreenPos:
     return ScreenPos(uncentered_pos.x - size[0] / 2, uncentered_pos.y - size[1] / 2)
 
@@ -470,9 +481,10 @@ def render_stage(
     fake_screen: Surface,
     sprite_server: SpriteServer,
     font_server: AssetServer[Font],
+    background_color: tuple[int, int, int],
 ):
     window.fill((0, 0, 0))
-    fake_screen.fill((51, 88, 114))
+    fake_screen.fill(background_color)
     render_sprites_process(fake_screen, sprite_server)
     render_text_process(fake_screen, font_server)
     scaled = pygame.transform.smoothscale(fake_screen, window.get_size())
@@ -612,18 +624,29 @@ def deletion_process():
         esper.delete_entity(ent, immediate=True)
 
 
-def update_timer(level: LevelGridResource, time_start: float, time_text: int):
+def get_time_left(level: LevelGridResource, time_start: float):
     time_elapsed = pygame.time.get_ticks() / 1000 - time_start
     time_left = level.timer_duration - time_elapsed
+    return time_left
+
+
+def update_timer(level: LevelGridResource, time_start: float, time_text: int):
+    time_left = get_time_left(level, time_start)
     display_time = floor(time_left * 100) / 100.0
     esper.component_for_entity(time_text, Text).text = f"Time Left: {display_time}"
 
 
-def main():
-    pygame.init()
-    window = pygame.display.set_mode(RESOLUTION, pygame.RESIZABLE)
-    fake_screen = Surface(RESOLUTION)
+def lose_process(level: LevelGridResource, time_start: float) -> int:
+    time_left = get_time_left(level, time_start)
+    if time_left <= 0:
+        return Operations.PROGRESS
+    else:
+        return Operations.CONTINUE
+
+
+def main_game(window: pygame.Surface, fake_screen: Surface):
     clock = pygame.time.Clock()
+    background_color = (51, 88, 114)
 
     sprite_server = SpriteServer(AssetServer([]))
     font_server = AssetServer([])
@@ -665,9 +688,123 @@ def main():
             )
 
         update_timer(level_grid_resource, time_start, time_text)
-        render_stage(window, fake_screen, sprite_server, font_server)
+        operation = lose_process(level_grid_resource, time_start)
+        if operation == Operations.PROGRESS:
+            return operation
+        render_stage(window, fake_screen, sprite_server, font_server, background_color)
         deletion_process()
         clock.tick()
+
+    return Operations.QUIT
+
+
+def lose_event_stage(
+    event: pygame.event.Event,
+    running: bool,
+    window: Surface,
+    events: Events,
+    sprite_server: SpriteServer,
+) -> bool:
+    if event.type == pygame.QUIT:
+        running = False
+    if event.type == pygame.MOUSEBUTTONDOWN:
+        scale = (
+            RESOLUTION[0] / window.get_width(),
+            RESOLUTION[1] / window.get_height(),
+        )
+        mouse_pos = pygame.mouse.get_pos()
+        mouse_pos = (mouse_pos[0] * scale[0], mouse_pos[1] * scale[1])
+        handle_clicks_process(events, mouse_pos, sprite_server)
+
+    return running
+
+
+def operation_process(events: Events) -> int:
+    operations = events.get(OperationEvent)
+    if len(operations) > 0:
+        return operations[-1].data.operation
+    return Operations.CONTINUE
+
+
+def lose(window: pygame.Surface, fake_screen: Surface) -> int:
+    clock = pygame.time.Clock()
+    background_color = (216, 33, 33)
+
+    sprite_server = SpriteServer(AssetServer([]))
+    font_server = AssetServer([])
+    silkscreen_large = font_server.add(Font("assets/slkscr.ttf", 100))
+    silkscreen_med = font_server.add(Font("assets/slkscr.ttf", 50))
+    events = Events({}, {}, True)
+
+    lose_text = esper.create_entity()
+    esper.add_component(lose_text, Text("YOU LOSE!", silkscreen_large))
+    esper.add_component(lose_text, ScreenPos(RESOLUTION[0] / 2, RESOLUTION[1] / 4))
+    esper.add_component(lose_text, Centered())
+
+    level_text = esper.create_entity()
+    esper.add_component(level_text, Text("Level: 10", silkscreen_med))
+    esper.add_component(
+        level_text, ScreenPos(RESOLUTION[0] / 2, RESOLUTION[1] / 2 - 50)
+    )
+    esper.add_component(level_text, Centered())
+
+    hs_text = esper.create_entity()
+    esper.add_component(hs_text, Text("Highest Level: 20", silkscreen_med))
+    esper.add_component(hs_text, ScreenPos(RESOLUTION[0] / 2, RESOLUTION[1] / 2))
+    esper.add_component(hs_text, Centered())
+
+    quit_button = esper.create_entity()
+    esper.add_component(
+        quit_button, Renderable(sprite_server.add("assets/quit_button.png"))
+    )
+    esper.add_component(
+        quit_button, ScreenPos(RESOLUTION[0] / 2 - 200, RESOLUTION[1] / 2 + 150)
+    )
+    esper.add_component(quit_button, Centered())
+    esper.add_component(quit_button, Clickable(OperationEvent(Operations.QUIT)))
+
+    retry_button = esper.create_entity()
+    esper.add_component(
+        retry_button, Renderable(sprite_server.add("assets/retry_button.png"))
+    )
+    esper.add_component(
+        retry_button, ScreenPos(RESOLUTION[0] / 2 + 200, RESOLUTION[1] / 2 + 150)
+    )
+    esper.add_component(retry_button, Centered())
+    esper.add_component(retry_button, Clickable(OperationEvent(Operations.PROGRESS)))
+
+    running = True
+    while running:
+        for event in pygame.event.get():
+            running = lose_event_stage(event, running, window, events, sprite_server)
+
+        operation = operation_process(events)
+        if operation != Operations.CONTINUE:
+            return operation
+        render_stage(window, fake_screen, sprite_server, font_server, background_color)
+        deletion_process()
+        clock.tick()
+        events.clear()
+
+    return Operations.QUIT
+
+
+def main():
+    pygame.init()
+    window = pygame.display.set_mode(RESOLUTION, pygame.RESIZABLE)
+    fake_screen = Surface(RESOLUTION)
+
+    while True:
+        operation = main_game(window, fake_screen)
+        if operation == Operations.QUIT:
+            break
+        esper.switch_world("lose")
+        esper.delete_world("default")
+        operation = lose(window, fake_screen)
+        if operation == Operations.QUIT:
+            break
+        esper.switch_world("default")
+        esper.delete_world("lose")
 
 
 if __name__ == "__main__":
