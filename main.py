@@ -1,4 +1,5 @@
 import json
+import os
 import random
 from copy import deepcopy
 from dataclasses import dataclass
@@ -450,6 +451,43 @@ class HighestLevels:
         self.absolute_highest_level = max(self.absolute_highest_level, new)
 
 
+@dataclass
+class Playlist:
+    fn: list[str]
+    nfn: list[str]
+    playlist: list[str]
+    idx: int
+    is_fn: bool
+    batches: int
+
+    @staticmethod
+    def load(path: str, seed: int):
+        random.seed(seed)
+        fn = os.listdir(f"{path}/FN/")
+        fn = [f"assets/music/FN/{song}" for song in fn]
+        nfn = os.listdir(f"{path}/NFN/")
+        nfn = [f"assets/music/NFN/{song}" for song in nfn]
+
+        random.shuffle(fn)
+        random.shuffle(nfn)
+        pygame.mixer.music.load(fn[0])
+        pygame.mixer.music.queue(fn[1])
+        return Playlist(fn, nfn, fn, 0, True, 0)
+
+    def update(self):
+        self.idx += 1
+        if self.is_fn and self.idx >= len(self.playlist) - 1:
+            self.playlist.extend(self.nfn)
+        if self.is_fn:
+            pygame.mixer.music.queue(self.playlist[self.idx + 1])
+            return
+        total_len = len(self.playlist) * (1 + self.batches)
+        actual_idx = self.idx - total_len
+        if actual_idx >= len(self.playlist) - 1:
+            random.shuffle(self.playlist)
+        pygame.mixer.music.queue(self.playlist[self.idx + 1])
+
+
 def center_pos(uncentered_pos: ScreenPos, size: tuple[float, float]) -> ScreenPos:
     return ScreenPos(uncentered_pos.x - size[0] / 2, uncentered_pos.y - size[1] / 2)
 
@@ -618,6 +656,7 @@ def event_stage(
     levels: LevelsResource,
     level_text: int,
     time_start: float,
+    playlist: Playlist,
 ) -> tuple[bool, int, LevelGridResource, float]:
     if event.type == pygame.QUIT:
         running = False
@@ -630,6 +669,8 @@ def event_stage(
         mouse_pos = (mouse_pos[0] * scale[0], mouse_pos[1] * scale[1])
         move_event(mouse_pos, level_grid_resource, events)
         handle_clicks_process(events, mouse_pos, sprite_server)
+    if event.type == pygame.USEREVENT:
+        playlist.update()
     level_done_process(events, silkscreen_med, next_button_image, levels, level_num)
     level_num, level_grid_resource, time_start = next_level_process(
         events,
@@ -672,7 +713,9 @@ def lose_process(
         return Operations.CONTINUE
 
 
-def main_game(window: pygame.Surface, fake_screen: Surface) -> int | Operations.Lose:
+def main_game(
+    window: pygame.Surface, fake_screen: Surface, playlist: Playlist
+) -> int | Operations.Lose:
     clock = pygame.time.Clock()
     background_color = (51, 88, 114)
 
@@ -713,6 +756,7 @@ def main_game(window: pygame.Surface, fake_screen: Surface) -> int | Operations.
                 levels,
                 level_text,
                 time_start,
+                playlist,
             )
 
         update_timer(level_grid_resource, time_start, time_text)
@@ -732,6 +776,7 @@ def lose_event_stage(
     window: Surface,
     events: Events,
     sprite_server: SpriteServer,
+    playlist: Playlist,
 ) -> bool:
     if event.type == pygame.QUIT:
         running = False
@@ -743,6 +788,8 @@ def lose_event_stage(
         mouse_pos = pygame.mouse.get_pos()
         mouse_pos = (mouse_pos[0] * scale[0], mouse_pos[1] * scale[1])
         handle_clicks_process(events, mouse_pos, sprite_server)
+    if event.type == pygame.USEREVENT:
+        playlist.update()
 
     return running
 
@@ -759,6 +806,7 @@ def lose(
     fake_screen: Surface,
     last_level: int,
     highest_levels: HighestLevels,
+    playlist: Playlist,
 ) -> int:
     clock = pygame.time.Clock()
     background_color = (216, 33, 33)
@@ -815,7 +863,9 @@ def lose(
     running = True
     while running:
         for event in pygame.event.get():
-            running = lose_event_stage(event, running, window, events, sprite_server)
+            running = lose_event_stage(
+                event, running, window, events, sprite_server, playlist
+            )
 
         operation = operation_process(events)
         if operation != Operations.CONTINUE:
@@ -833,16 +883,21 @@ def main():
     window = pygame.display.set_mode(RESOLUTION, pygame.RESIZABLE)
     fake_screen = Surface(RESOLUTION)
     highest_levels = HighestLevels.from_json("data/score_data.json")
+    pygame.mixer.music.set_endevent(pygame.USEREVENT)
+    playlist = Playlist.load("assets/music", 3141)
+    pygame.mixer.music.play()
 
     while True:
-        operation = main_game(window, fake_screen)
+        operation = main_game(window, fake_screen, playlist)
         if operation == Operations.QUIT:
             break
         if type(operation) is Operations.Lose:
             highest_levels.update(operation.level)
             esper.switch_world("lose")
             esper.delete_world("default")
-            operation = lose(window, fake_screen, operation.level, highest_levels)
+            operation = lose(
+                window, fake_screen, operation.level, highest_levels, playlist
+            )
         if operation == Operations.QUIT:
             break
         esper.switch_world("default")
