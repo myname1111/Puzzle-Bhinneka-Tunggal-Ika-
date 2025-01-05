@@ -878,6 +878,73 @@ def lose(
     return Operations.QUIT
 
 
+def start_event_stage(
+    event: pygame.event.Event,
+    events: Events,
+    window: Surface,
+    sprite_server: SpriteServer,
+    playlist: Playlist,
+    running: bool,
+) -> bool:
+    if event.type == pygame.QUIT:
+        running = False
+    if event.type == pygame.MOUSEBUTTONDOWN:
+        scale = (
+            RESOLUTION[0] / window.get_width(),
+            RESOLUTION[1] / window.get_height(),
+        )
+        mouse_pos = pygame.mouse.get_pos()
+        mouse_pos = (mouse_pos[0] * scale[0], mouse_pos[1] * scale[1])
+        handle_clicks_process(events, mouse_pos, sprite_server)
+    if event.type == pygame.USEREVENT:
+        playlist.update()
+    return running
+
+
+def start(
+    window: Surface, fake_screen: Surface, playlist: Playlist
+) -> int | Operations.Lose:
+    clock = pygame.time.Clock()
+    background_color = (51, 88, 114)
+
+    sprite_server = SpriteServer(AssetServer([]))
+    font_server = AssetServer([])
+    silkscreen_large = font_server.add(Font("assets/slkscr.ttf", 50))
+    events = Events({}, {}, True)
+
+    lose_text = esper.create_entity()
+    esper.add_component(
+        lose_text, Text("Puzzle Bhineka Tunggal Inka", silkscreen_large)
+    )
+    esper.add_component(lose_text, ScreenPos(RESOLUTION[0] / 2, RESOLUTION[1] / 4))
+    esper.add_component(lose_text, Centered())
+
+    quit_button = esper.create_entity()
+    esper.add_component(
+        quit_button, Renderable(sprite_server.add("assets/start_button.png"))
+    )
+    esper.add_component(quit_button, ScreenPos(RESOLUTION[0] / 2, RESOLUTION[1] / 2))
+    esper.add_component(quit_button, Centered())
+    esper.add_component(quit_button, Clickable(OperationEvent(Operations.PROGRESS)))
+
+    running = True
+    while running:
+        for event in pygame.event.get():
+            running = start_event_stage(
+                event, events, window, sprite_server, playlist, running
+            )
+
+        operation = operation_process(events)
+        if operation != Operations.CONTINUE:
+            return operation
+        render_stage(window, fake_screen, sprite_server, font_server, background_color)
+        deletion_process()
+        clock.tick()
+        events.clear()
+
+    return Operations.QUIT
+
+
 def main():
     pygame.init()
     window = pygame.display.set_mode(RESOLUTION, pygame.RESIZABLE)
@@ -888,6 +955,12 @@ def main():
     pygame.mixer.music.play()
 
     while True:
+        esper.switch_world("start")
+        operation = start(window, fake_screen, playlist)
+        esper.switch_world("default")
+        esper.delete_world("start")
+        if operation == Operations.QUIT:
+            break
         operation = main_game(window, fake_screen, playlist)
         if operation == Operations.QUIT:
             break
