@@ -418,6 +418,10 @@ class Operations:
     CONTINUE = 1
     PROGRESS = 2
 
+    @dataclass
+    class Lose:
+        level: int
+
 
 @dataclass
 class OperationEvent:
@@ -636,15 +640,17 @@ def update_timer(level: LevelGridResource, time_start: float, time_text: int):
     esper.component_for_entity(time_text, Text).text = f"Time Left: {display_time}"
 
 
-def lose_process(level: LevelGridResource, time_start: float) -> int:
+def lose_process(
+    level: LevelGridResource, time_start: float, level_num: int
+) -> int | Operations.Lose:
     time_left = get_time_left(level, time_start)
     if time_left <= 0:
-        return Operations.PROGRESS
+        return Operations.Lose(level_num - 1)
     else:
         return Operations.CONTINUE
 
 
-def main_game(window: pygame.Surface, fake_screen: Surface):
+def main_game(window: pygame.Surface, fake_screen: Surface) -> int | Operations.Lose:
     clock = pygame.time.Clock()
     background_color = (51, 88, 114)
 
@@ -688,8 +694,8 @@ def main_game(window: pygame.Surface, fake_screen: Surface):
             )
 
         update_timer(level_grid_resource, time_start, time_text)
-        operation = lose_process(level_grid_resource, time_start)
-        if operation == Operations.PROGRESS:
+        operation = lose_process(level_grid_resource, time_start, level)
+        if operation != Operations.CONTINUE:
             return operation
         render_stage(window, fake_screen, sprite_server, font_server, background_color)
         deletion_process()
@@ -726,7 +732,7 @@ def operation_process(events: Events) -> int:
     return Operations.CONTINUE
 
 
-def lose(window: pygame.Surface, fake_screen: Surface) -> int:
+def lose(window: pygame.Surface, fake_screen: Surface, last_level: int) -> int:
     clock = pygame.time.Clock()
     background_color = (216, 33, 33)
 
@@ -742,7 +748,7 @@ def lose(window: pygame.Surface, fake_screen: Surface) -> int:
     esper.add_component(lose_text, Centered())
 
     level_text = esper.create_entity()
-    esper.add_component(level_text, Text("Level: 10", silkscreen_med))
+    esper.add_component(level_text, Text(f"Level: {last_level}", silkscreen_med))
     esper.add_component(
         level_text, ScreenPos(RESOLUTION[0] / 2, RESOLUTION[1] / 2 - 50)
     )
@@ -798,9 +804,10 @@ def main():
         operation = main_game(window, fake_screen)
         if operation == Operations.QUIT:
             break
-        esper.switch_world("lose")
-        esper.delete_world("default")
-        operation = lose(window, fake_screen)
+        if type(operation) is Operations.Lose:
+            esper.switch_world("lose")
+            esper.delete_world("default")
+            operation = lose(window, fake_screen, operation.level)
         if operation == Operations.QUIT:
             break
         esper.switch_world("default")
